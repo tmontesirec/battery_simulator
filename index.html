@@ -1,0 +1,595 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simulador Batería Li-Ion v7.2 - Fractura Realista</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;500;700;900&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #f8fafc; font-family: 'Inter', sans-serif; color: #0f172a; }
+        
+        #canvas-container { width: 100vw; height: 100vh; position: absolute; top: 0; left: 0; z-index: 1; transition: opacity 0.5s; }
+        
+        #sim-ui { 
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 10; 
+            pointer-events: none; opacity: 0; transition: opacity 0.5s; display: none;
+        }
+        #sim-ui.visible { opacity: 1; display: flex; }
+        
+        #setup-screen {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: #f1f5f9; z-index: 100;
+            display: flex; flex-direction: column; overflow-y: auto;
+            transition: transform 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        #setup-screen.hidden-up { transform: translateY(-100%); }
+
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.9); backdrop-filter: blur(16px);
+            border: 1px solid rgba(255, 255, 255, 0.6);
+            border-radius: 16px; padding: 20px; pointer-events: auto;
+            box-shadow: 0 10px 30px -5px rgba(0,0,0,0.1);
+        }
+        
+        .mono { font-family: 'JetBrains Mono', monospace; }
+        .label-uc { font-size: 0.65rem; font-weight: 800; color: #64748b; text-transform: uppercase; letter-spacing: 0.08em; }
+        
+        .btn { padding: 12px 24px; border-radius: 10px; font-weight: 700; transition: all 0.2s; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
+        .btn-primary { background: #3b82f6; color: white; box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3); }
+        .btn-primary:hover { background: #2563eb; transform: translateY(-2px); }
+        .btn-mode { background: #e2e8f0; color: #475569; font-size: 0.8rem; padding: 8px 16px; }
+        .btn-mode.active { background: #0f172a; color: white; box-shadow: 0 4px 12px rgba(15, 23, 42, 0.2); }
+
+        input[type=range] { width: 100%; accent-color: #3b82f6; height: 6px; background: #cbd5e1; border-radius: 3px; cursor: pointer; }
+        
+        .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 8px; }
+        
+        #eol-overlay {
+            position: absolute; inset: 0; background: rgba(255,255,255,0.8); 
+            backdrop-filter: blur(12px); z-index: 50; display: none;
+            flex-direction: column; align-items: center; justify-content: center;
+        }
+        #eol-overlay.active { display: flex; }
+    </style>
+</head>
+<body>
+
+    <!-- PANTALLA 1: CONFIGURACIÓN -->
+    <div id="setup-screen" class="p-6 lg:p-12">
+        <div class="max-w-6xl mx-auto w-full h-full flex flex-col">
+            <div class="flex justify-between items-end mb-8">
+                <div>
+                    <h1 class="text-4xl font-black text-slate-900 tracking-tight">Laboratorio Baterías v7.2</h1>
+                    <p class="text-slate-500 font-medium mt-1">Visualización de Fractura Estructural (Chen 2020)</p>
+                </div>
+                <div class="text-right">
+                    <div class="bg-blue-50 text-blue-700 text-xs font-bold px-4 py-2 rounded-full border border-blue-100">
+                        LG M50 (NMC 811 / SiOx)
+                    </div>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 lg:grid-cols-12 gap-8 flex-grow">
+                
+                <!-- Panel Izquierdo: Inputs -->
+                <div class="lg:col-span-4 bg-white p-6 rounded-2xl shadow-sm border border-slate-200 h-fit">
+                    <h3 class="label-uc text-slate-900 border-b pb-3 mb-4">Parámetros de Operación</h3>
+                    
+                    <div class="space-y-5">
+                        <div>
+                            <div class="flex justify-between mb-1"><label class="label-uc">Temperatura</label> <span class="mono text-xs font-bold text-slate-600">°C</span></div>
+                            <input type="number" id="calc-temp" value="25" class="w-full bg-slate-50 border border-slate-200 rounded p-2 font-bold text-slate-700 focus:outline-none focus:border-blue-500 transition">
+                        </div>
+                        <div>
+                            <div class="flex justify-between mb-1"><label class="label-uc">C-Rate (Corriente)</label> <span class="mono text-xs font-bold text-slate-600">C</span></div>
+                            <input type="number" id="calc-crate" value="1.0" step="0.1" class="w-full bg-slate-50 border border-slate-200 rounded p-2 font-bold text-slate-700 focus:outline-none focus:border-blue-500 transition">
+                        </div>
+                        <div>
+                            <div class="flex justify-between mb-1"><label class="label-uc">Profundidad (DOD)</label> <span class="mono text-xs font-bold text-slate-600">0-1</span></div>
+                            <input type="number" id="calc-dod" value="0.8" step="0.1" max="1.0" class="w-full bg-slate-50 border border-slate-200 rounded p-2 font-bold text-slate-700 focus:outline-none focus:border-blue-500 transition">
+                        </div>
+                        <div>
+                            <div class="flex justify-between mb-1"><label class="label-uc">Meta de Ciclos</label></div>
+                            <input type="number" id="calc-cycles" value="3000" class="w-full bg-slate-50 border border-slate-200 rounded p-2 font-bold text-slate-700 focus:outline-none focus:border-blue-500 transition">
+                        </div>
+                    </div>
+
+                    <button id="btn-calculate" class="btn btn-primary w-full mt-8 shadow-lg shadow-blue-500/30">
+                        CALCULAR VIDA ÚTIL
+                    </button>
+                </div>
+
+                <!-- Panel Derecho: Resultados -->
+                <div class="lg:col-span-8 flex flex-col gap-6">
+                    <div class="grid grid-cols-3 gap-4">
+                        <div class="bg-white p-5 rounded-2xl shadow-sm border-t-4 border-green-500">
+                            <div class="label-uc mb-1">Ciclos Totales</div>
+                            <div class="text-3xl font-black text-slate-800 mono" id="res-cycles">--</div>
+                        </div>
+                        <div class="bg-white p-5 rounded-2xl shadow-sm border-t-4 border-blue-500">
+                            <div class="label-uc mb-1">Vida Estimada</div>
+                            <div class="text-3xl font-black text-slate-800 mono"><span id="res-years">--</span> <span class="text-sm text-slate-400 font-bold">Años</span></div>
+                        </div>
+                        <div class="bg-white p-5 rounded-2xl shadow-sm border-t-4 border-red-500">
+                            <div class="label-uc mb-1">Mecanismo Fallo</div>
+                            <div class="text-xl font-black text-red-500 leading-tight mt-1" id="res-failure">--</div>
+                        </div>
+                    </div>
+
+                    <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 flex-grow flex flex-col min-h-[300px]">
+                        <h3 class="label-uc text-slate-900 mb-4">Proyección SOH (Modelo Matemático)</h3>
+                        <div class="relative flex-grow w-full">
+                            <canvas id="lifeChart"></canvas>
+                        </div>
+                    </div>
+
+                    <div id="action-area" class="flex justify-end opacity-50 pointer-events-none transition-opacity">
+                        <button id="btn-go-sim" class="btn bg-slate-900 text-white text-lg px-10 shadow-xl hover:bg-slate-800 hover:scale-105 transform transition">
+                            INICIAR EXPERIMENTO 3D ➔
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- PANTALLA 2: SIMULACIÓN 3D -->
+    <div id="canvas-container"></div>
+
+    <div id="sim-ui" class="p-6 flex justify-between items-start pointer-events-none">
+        
+        <!-- CONTROLES (Izquierda) -->
+        <div class="glass-panel w-80 pointer-events-auto flex flex-col gap-5">
+            <div class="flex justify-between items-center border-b border-slate-200 pb-3">
+                <span class="font-black text-slate-800 tracking-tight">CONTROL VISUAL</span>
+                <div class="flex items-center gap-2">
+                    <div class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
+                    <span class="text-[10px] font-bold text-green-600 uppercase">Live</span>
+                </div>
+            </div>
+
+            <!-- Selector de Velocidad -->
+            <div>
+                <div class="label-uc mb-2">Modo de Simulación</div>
+                <div class="grid grid-cols-2 gap-2 bg-slate-100 p-1 rounded-lg">
+                    <button id="mode-soc" class="btn-mode rounded-md font-bold text-center transition active">
+                        🔍 VER SOC<br><span class="text-[9px] opacity-70">Normal (Ciclos)</span>
+                    </button>
+                    <button id="mode-deg" class="btn-mode rounded-md font-bold text-center transition">
+                        ⏩ VER VIDA<br><span class="text-[9px] opacity-70">Turbo (Años)</span>
+                    </button>
+                </div>
+                <input type="range" id="sim-speed" min="1" max="200000" value="10" class="mt-3 opacity-50 hover:opacity-100 transition">
+                <div class="flex justify-between text-[10px] font-bold text-slate-400 mt-1">
+                    <span>1x</span>
+                    <span id="speed-display">10x</span>
+                    <span>200k x</span>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-3">
+                <button id="btn-pause" class="btn bg-amber-400 text-amber-900 text-xs hover:bg-amber-500">PAUSAR</button>
+                <button id="btn-restart" class="btn bg-slate-200 text-slate-600 text-xs hover:bg-slate-300">REINICIAR</button>
+            </div>
+            
+            <button id="btn-back" class="text-xs text-slate-400 hover:text-slate-800 font-bold mt-2 text-center transition">← Volver a Parámetros</button>
+        </div>
+
+        <!-- MONITOR (Derecha) -->
+        <div class="glass-panel w-72 pointer-events-auto flex flex-col gap-5">
+            
+            <!-- Ciclos -->
+            <div class="text-center border-b border-slate-200 pb-4">
+                <div class="label-uc mb-1">Ciclo Actual</div>
+                <div class="text-5xl font-black text-slate-800 mono tracking-tighter" id="sim-cycles">0</div>
+                <div class="text-xs font-bold text-slate-400 mt-1 mono" id="sim-time">0d 00h</div>
+            </div>
+
+            <!-- Estado -->
+            <div class="grid grid-cols-2 gap-3 text-center">
+                <div class="bg-white/50 p-3 rounded-xl border border-slate-100">
+                    <div class="label-uc text-slate-500">SOH</div>
+                    <div class="mono text-2xl font-bold text-green-600" id="sim-soh">100%</div>
+                </div>
+                <div class="bg-white/50 p-3 rounded-xl border border-slate-100">
+                    <div class="label-uc text-slate-500">SOC</div>
+                    <div class="mono text-2xl font-bold text-blue-600" id="sim-soc">0%</div>
+                </div>
+            </div>
+
+            <!-- Leyenda Visual -->
+            <div class="bg-slate-50/80 p-4 rounded-xl border border-slate-200">
+                <div class="label-uc mb-3">Visualización de Daños</div>
+                <div class="space-y-3 text-xs font-bold text-slate-600">
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center"><span class="dot bg-yellow-400 shadow-sm"></span> SEI (Capa)</div>
+                        <span class="mono text-yellow-600" id="leg-sei">0%</span>
+                    </div>
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center"><span class="dot bg-white border border-slate-300 shadow-sm"></span> Plating (Picos)</div>
+                        <span class="mono text-slate-500" id="leg-plate">0%</span>
+                    </div>
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center"><span class="dot bg-purple-600 shadow-sm"></span> Grietas (Gris)</div>
+                        <span class="mono text-purple-600" id="leg-crack">0%</span>
+                    </div>
+                    <div class="h-px bg-slate-200 my-2"></div>
+                    <div class="flex items-center gap-2 text-[10px] text-slate-400">
+                        <span class="w-2 h-2 rounded-full bg-cyan-400"></span> Iones Li+ (Difusión Activa)
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- FIN DE VIDA (Overlay) -->
+    <div id="eol-overlay">
+        <div class="bg-white p-10 rounded-3xl shadow-2xl text-center max-w-md border border-slate-100 transform scale-100 transition-transform">
+            <h2 class="text-4xl font-black text-slate-900 mb-2">FIN DE VIDA ÚTIL</h2>
+            <p class="text-slate-500 mb-8 font-medium">La batería ha caído por debajo del 70% de capacidad.</p>
+            
+            <div class="grid grid-cols-2 gap-4 mb-8 text-left">
+                <div class="bg-slate-50 p-4 rounded-xl border border-slate-200">
+                    <div class="label-uc mb-1">Ciclos Totales</div>
+                    <div class="text-2xl font-black text-slate-800 mono" id="eol-cycles">--</div>
+                </div>
+                <div class="bg-slate-50 p-4 rounded-xl border border-slate-200">
+                    <div class="label-uc mb-1">Tiempo</div>
+                    <div class="text-lg font-bold text-slate-600 mono" id="eol-time">--</div>
+                </div>
+                <div class="col-span-2 bg-red-50 p-4 rounded-xl border border-red-100">
+                    <div class="label-uc text-red-400 mb-1">Causa del Fallo</div>
+                    <div class="text-xl font-black text-red-600" id="eol-reason">--</div>
+                </div>
+            </div>
+            
+            <button onclick="resetSimulation()" class="btn btn-primary w-full py-4 text-lg shadow-xl">Reiniciar Experimento</button>
+        </div>
+    </div>
+
+    <script>
+        // ================== FÍSICA (Chen et al. 2020 + Arrhenius) ==================
+        const EA_SEI = 35000;   
+        const EA_CATHODE = 17800; 
+        const R_GAS = 8.314;
+
+        let simParams = {
+            temp: 25, cRate: 1.0, dod: 0.8,
+            k_sei: 1.5e-7, k_crack: 1.5e-7, k_plate: 3.0e-6
+        };
+
+        let simState = {
+            isPlaying: false, speed: 10,
+            timeHours: 0, cycles: 0, soc: 0, soh: 100,
+            isCharging: true, isDead: false,
+            dmgSEI: 0, dmgCrack: 0, dmgPlate: 0
+        };
+
+        // --- CÁLCULO PREVIO ---
+        let chart;
+        document.getElementById('btn-calculate').addEventListener('click', () => {
+            const temp = parseFloat(document.getElementById('calc-temp').value);
+            const crate = parseFloat(document.getElementById('calc-crate').value);
+            const dod = parseFloat(document.getElementById('calc-dod').value);
+            const cycles = parseInt(document.getElementById('calc-cycles').value);
+
+            const history = runMathModel(temp, crate, dod, cycles);
+
+            document.getElementById('res-cycles').innerText = history.eolCycle;
+            document.getElementById('res-years').innerText = (history.eolTimeHours / (24*365)).toFixed(1);
+            document.getElementById('res-failure').innerText = history.failMode;
+
+            renderChart(history);
+            document.getElementById('action-area').classList.remove('opacity-50', 'pointer-events-none');
+            
+            simParams = { temp, cRate: crate, dod, k_sei: 1.5e-7, k_crack: 1.5e-7, k_plate: 3.0e-6 };
+        });
+
+        function runMathModel(temp, crate, dod, maxCycles) {
+            const tempK = temp + 273.15;
+            const arrheniusSEI = Math.exp(EA_SEI * (1/298.15 - 1/tempK));
+            const stress = Math.pow(crate, 1.6) * Math.pow(dod, 1.2);
+            const rateSEI = 3.5e-5 * arrheniusSEI; 
+            const rateCrack = 3.0e-5 * stress; 
+            let ratePlate = (crate > 0.8 && temp < 15) ? 1.0e-4 * crate * (15 - temp) : 0;
+
+            let soh = 1.0, dS = 0, dC = 0, dP = 0;
+            const data = { labels: [], soh: [] };
+            let eolCycle = maxCycles, failMode = "No alcanzado";
+            const timePerCycle = (2 / crate) * dod; 
+
+            for(let i=0; i<=maxCycles; i+=50) {
+                const block = (i === 0) ? 0 : 50;
+                dS += rateSEI * block; dC += rateCrack * block; dP += ratePlate * block;
+                soh = 1.0 - (dS + dC + dP);
+                data.labels.push(i); data.soh.push(soh * 100);
+                if(soh < 0.7 && eolCycle === maxCycles) {
+                    eolCycle = i;
+                    if(dS > dC && dS > dP) failMode = "SEI (Químico)";
+                    else if(dC > dS) failMode = "Cracking (Mecánico)";
+                    else failMode = "Plating (Litio)";
+                    break;
+                }
+            }
+            return { eolCycle, eolTimeHours: eolCycle * timePerCycle, failMode, data };
+        }
+
+        function renderChart(history) {
+            const ctx = document.getElementById('lifeChart').getContext('2d');
+            if(chart) chart.destroy();
+            chart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: history.data.labels,
+                    datasets: [{
+                        label: 'SOH (%)',
+                        data: history.data.soh,
+                        borderColor: '#3b82f6', backgroundColor: 'rgba(59, 130, 246, 0.1)', fill: true, tension: 0.4, pointRadius: 0
+                    }]
+                },
+                options: { responsive: true, maintainAspectRatio: false, scales: { y: { min: 60, max: 100 } }, plugins: { legend: { display: false } } }
+            });
+        }
+
+        // --- VISUALIZACIÓN ---
+        // Modos de Velocidad
+        const btnSoc = document.getElementById('mode-soc');
+        const btnDeg = document.getElementById('mode-deg');
+        const speedRange = document.getElementById('sim-speed');
+        const speedDisp = document.getElementById('speed-display');
+
+        function setMode(mode) {
+            if(mode === 'soc') {
+                simState.speed = 20;
+                speedRange.value = 20;
+                btnSoc.classList.add('active'); btnDeg.classList.remove('active');
+            } else {
+                simState.speed = 100000;
+                speedRange.value = 100000;
+                btnDeg.classList.add('active'); btnSoc.classList.remove('active');
+            }
+            speedDisp.innerText = simState.speed + 'x';
+        }
+        
+        btnSoc.addEventListener('click', () => setMode('soc'));
+        btnDeg.addEventListener('click', () => setMode('deg'));
+        speedRange.addEventListener('input', (e) => {
+            simState.speed = parseInt(e.target.value);
+            speedDisp.innerText = simState.speed + 'x';
+            if(simState.speed > 1000) { btnDeg.classList.add('active'); btnSoc.classList.remove('active'); }
+            else { btnSoc.classList.add('active'); btnDeg.classList.remove('active'); }
+        });
+
+        document.getElementById('btn-go-sim').addEventListener('click', () => {
+            document.getElementById('setup-screen').classList.add('hidden-up');
+            document.getElementById('sim-ui').classList.add('visible');
+            init3D(); startSimulation();
+        });
+        document.getElementById('btn-back').addEventListener('click', () => {
+            document.getElementById('setup-screen').classList.remove('hidden-up');
+            document.getElementById('sim-ui').classList.remove('visible');
+            simState.isPlaying = false;
+        });
+        document.getElementById('btn-pause').addEventListener('click', (e) => {
+            simState.isPlaying = !simState.isPlaying; e.target.innerText = simState.isPlaying ? "PAUSAR" : "REANUDAR";
+        });
+        document.getElementById('btn-restart').addEventListener('click', resetSimulation);
+
+        function startSimulation() { resetSimulationVariables(); simState.isPlaying = true; }
+        function resetSimulation() {
+            document.getElementById('eol-overlay').classList.remove('active');
+            resetSimulationVariables();
+            cathodeParticles.forEach(p => { 
+                p.position.copy(p.userData.origPos); 
+                p.material.color.setHex(0x7c3aed); 
+                p.userData.shell.material.opacity = 0; 
+            });
+            seiBlock.material.opacity = 0; 
+            dendrites.forEach(d => d.scale.set(0,0,0));
+            simState.isPlaying = true;
+        }
+        function resetSimulationVariables() {
+            simState.timeHours = 0; simState.cycles = 0; simState.soc = 0; simState.soh = 100;
+            simState.dmgSEI = 0; simState.dmgCrack = 0; simState.dmgPlate = 0; simState.isDead = false;
+        }
+
+        // --- THREE.JS ---
+        let scene, camera, renderer, controls;
+        let cathodeParticles = [], anodeSheets = [], dendrites = [], ions = [];
+        let seiBlock, ionsMesh, dummy;
+        const ION_COUNT = 300;
+
+        function init3D() {
+            if(scene) return;
+            const container = document.getElementById('canvas-container');
+            scene = new THREE.Scene(); scene.background = new THREE.Color(0xf8fafc); scene.fog = new THREE.FogExp2(0xf8fafc, 0.025);
+            camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100); camera.position.set(0, 3, 18);
+            renderer = new THREE.WebGLRenderer({ antialias: true }); renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio); renderer.shadowMap.enabled = true;
+            container.appendChild(renderer.domElement);
+            controls = new THREE.OrbitControls(camera, renderer.domElement); controls.enableDamping = true;
+
+            scene.add(new THREE.HemisphereLight(0xffffff, 0xffffff, 0.7));
+            const dir = new THREE.DirectionalLight(0xffffff, 0.8); dir.position.set(5, 10, 7); dir.castShadow = true; scene.add(dir);
+
+            // CÁTODO (Left - Purple)
+            const matCathode = new THREE.MeshStandardMaterial({ color: 0x7c3aed, roughness: 0.4 });
+            const matCEI = new THREE.MeshBasicMaterial({ color: 0xa855f7, transparent: true, opacity: 0 });
+            const geoCathode = new THREE.DodecahedronGeometry(0.4);
+            const cathodeGroup = new THREE.Group();
+            for(let i=0; i<60; i++) {
+                const mesh = new THREE.Mesh(geoCathode, matCathode.clone());
+                mesh.position.set(-5 + (Math.random()-0.5)*3, (Math.random()-0.5)*5, (Math.random()-0.5)*5);
+                mesh.rotation.set(Math.random()*3, Math.random()*3, 0); mesh.castShadow = true;
+                const shell = new THREE.Mesh(geoCathode, matCEI.clone()); shell.scale.set(1.1, 1.1, 1.1); mesh.add(shell);
+                mesh.userData = { origPos: mesh.position.clone(), shell: shell, drift: new THREE.Vector3(Math.random()-0.5, Math.random()-0.5, Math.random()-0.5).normalize() };
+                cathodeParticles.push(mesh); cathodeGroup.add(mesh);
+            }
+            const colCat = new THREE.Mesh(new THREE.BoxGeometry(0.2, 7, 7), new THREE.MeshStandardMaterial({color: 0x94a3b8})); colCat.position.x = -7; scene.add(colCat); scene.add(cathodeGroup);
+
+            // ÁNODO (Right - Dark Slate -> Gold)
+            const matAnode = new THREE.MeshStandardMaterial({ color: 0x334155 });
+            const anodeGroup = new THREE.Group();
+            for(let i=0; i<12; i++) {
+                const sheet = new THREE.Mesh(new THREE.BoxGeometry(2.5, 0.15, 2.5), matAnode.clone());
+                sheet.position.set(5, (i-6)*0.6, 0); sheet.castShadow = true;
+                sheet.userData = { origRot: sheet.rotation.clone() };
+                anodeSheets.push(sheet); anodeGroup.add(sheet);
+            }
+            const colAn = new THREE.Mesh(new THREE.BoxGeometry(0.2, 7, 7), new THREE.MeshStandardMaterial({color: 0xd97706})); colAn.position.x = 7; scene.add(colAn); scene.add(anodeGroup);
+
+            // SEI & Dendrites
+            seiBlock = new THREE.Mesh(new THREE.BoxGeometry(3.0, 7.5, 3.0), new THREE.MeshBasicMaterial({ color: 0xfacc15, transparent: true, opacity: 0, side: THREE.DoubleSide }));
+            seiBlock.position.set(5, 0, 0); scene.add(seiBlock);
+
+            const matDend = new THREE.MeshStandardMaterial({ color: 0xffffff });
+            for(let i=0; i<30; i++) {
+                const d = new THREE.Mesh(new THREE.ConeGeometry(0.1, 1.5, 5), matDend);
+                d.position.set(3.8, (Math.random()-0.5)*6, (Math.random()-0.5)*3); d.rotation.z = Math.PI/2; d.scale.set(0,0,0);
+                dendrites.push(d); scene.add(d);
+            }
+            scene.add(new THREE.Mesh(new THREE.BoxGeometry(0.1, 8, 8), new THREE.MeshBasicMaterial({color: 0xe2e8f0, transparent: true, opacity: 0.2})));
+
+            // IONES
+            const ionGeo = new THREE.SphereGeometry(0.08, 8, 8);
+            const ionMat = new THREE.MeshBasicMaterial({ color: 0x22d3ee });
+            ionsMesh = new THREE.InstancedMesh(ionGeo, ionMat, ION_COUNT);
+            scene.add(ionsMesh);
+            dummy = new THREE.Object3D();
+            for(let i=0; i<ION_COUNT; i++) ions.push({ x: (Math.random()-0.5)*10, y: (Math.random()-0.5)*6, z: (Math.random()-0.5)*4 });
+
+            animate();
+        }
+
+        const clock = new THREE.Clock();
+        function animate() {
+            requestAnimationFrame(animate);
+            if(!scene) return;
+            const dt = clock.getDelta();
+            const speed = simState.isPlaying ? simState.speed : 0;
+            const simDt = dt * speed;
+
+            if(simState.isPlaying && !simState.isDead) {
+                
+                const cycleTime = (3600 / simParams.cRate) * 2; 
+                
+                if (simDt > cycleTime) {
+                    const cyclesPassed = Math.floor(simDt / cycleTime);
+                    simState.cycles += cyclesPassed;
+                    simState.timeHours += simDt / 3600;
+                    simState.soc = Math.random() * 100; 
+                } else {
+                    const socRate = (simParams.cRate * 100) / 3600; 
+                    const dSoc = socRate * simDt;
+                    
+                    if(simState.isCharging) {
+                        simState.soc += dSoc; 
+                        if(simState.soc >= 100) { simState.soc = 100; simState.isCharging = false; }
+                    } else {
+                        simState.soc -= dSoc; 
+                        if(simState.soc <= 0) { 
+                            simState.soc = 0; 
+                            simState.isCharging = true; 
+                            simState.cycles++; 
+                        }
+                    }
+                    simState.timeHours += simDt / 3600;
+                }
+
+                // Degradación
+                const tempK = simParams.temp + 273.15;
+                const arrhenius = Math.exp(EA_SEI * (1/298.15 - 1/tempK));
+                const stress = Math.pow(simParams.cRate, 1.6);
+                
+                simState.dmgSEI += simParams.k_sei * arrhenius * simDt * 0.05;
+                simState.dmgCrack += simParams.k_crack * stress * simDt * 0.05;
+                
+                if(simState.isCharging && simState.soc > 80 && simParams.temp < 15) {
+                    simState.dmgPlate += simParams.k_plate * simParams.cRate * simDt * 0.1;
+                }
+                
+                simState.soh = Math.max(0, 100 * (1 - (simState.dmgSEI + simState.dmgCrack + simState.dmgPlate)));
+                if(simState.soh <= 70) { simState.isDead = true; simState.isPlaying = false; showEOL(); }
+
+                // Visual Updates
+                seiBlock.material.opacity = Math.min(0.9, simState.dmgSEI * 3);
+                
+                if(simState.dmgCrack > 0.01) {
+                    cathodeParticles.forEach(p => {
+                        const maxOffset = 2.0; 
+                        const currentOffset = Math.min(maxOffset, simState.dmgCrack * 5.0);
+                        
+                        p.position.copy(p.userData.origPos).addScaledVector(p.userData.drift, currentOffset);
+                        
+                        if(simState.dmgCrack > 0.5) {
+                            p.position.x += (Math.random()-0.5)*0.05;
+                            p.position.y += (Math.random()-0.5)*0.05;
+                            p.position.z += (Math.random()-0.5)*0.05;
+                        }
+
+                        p.userData.shell.material.opacity = Math.min(0.8, simState.dmgCrack * 3);
+                        p.material.color.setHSL(0.72, 0.7, 0.5 * Math.max(0.2, 1 - simState.dmgCrack));
+                    });
+                }
+
+                if(simState.dmgPlate > 0.02) dendrites.forEach((d, i) => { if(i < simState.dmgPlate * 200) d.scale.set(Math.min(2, simState.dmgPlate*5), Math.min(2, simState.dmgPlate*5), Math.min(2, simState.dmgPlate*5)); });
+                
+                const socFactor = simState.soc / 100;
+                anodeSheets.forEach(s => { s.material.color.setHSL(0.6 - (0.48*socFactor), 0.25 + (0.5*socFactor), 0.27 + (0.3*socFactor)); });
+
+                const ionsInAnodeTarget = Math.floor(ION_COUNT * (simState.soc / 100));
+                const diffSpeed = 0.1 * Math.sqrt(speed) * dt;
+                const driftSpeed = simParams.cRate * 0.05 * Math.sqrt(speed) * dt;
+
+                for(let i=0; i<ION_COUNT; i++) {
+                    let ion = ions[i];
+                    let tx = (i < ionsInAnodeTarget) ? 5 : -5; 
+                    
+                    ion.x += (Math.random()-0.5) * diffSpeed;
+                    ion.y += (Math.random()-0.5) * diffSpeed;
+                    ion.z += (Math.random()-0.5) * diffSpeed;
+
+                    if (ion.x < tx - 0.5) ion.x += driftSpeed;
+                    else if (ion.x > tx + 0.5) ion.x -= driftSpeed;
+
+                    if(ion.x > 6) ion.x = 6; if(ion.x < -6) ion.x = -6;
+                    ion.y = Math.max(-4, Math.min(4, ion.y)); ion.z = Math.max(-3, Math.min(3, ion.z));
+                    
+                    dummy.position.set(ion.x, ion.y, ion.z); dummy.updateMatrix();
+                    ionsMesh.setMatrixAt(i, dummy.matrix);
+                }
+                ionsMesh.instanceMatrix.needsUpdate = true;
+                updateUI();
+            }
+            renderer.render(scene, camera);
+        }
+
+        function updateUI() {
+            document.getElementById('sim-cycles').innerText = simState.cycles;
+            const d = Math.floor(simState.timeHours / 24);
+            document.getElementById('sim-time').innerText = `${d}d ${Math.floor(simState.timeHours % 24)}h`;
+            document.getElementById('sim-soh').innerText = simState.soh.toFixed(1) + '%';
+            document.getElementById('sim-soc').innerText = Math.round(simState.soc) + '%';
+            document.getElementById('leg-sei').innerText = (simState.dmgSEI*100).toFixed(1) + '%';
+            document.getElementById('leg-crack').innerText = (simState.dmgCrack*100).toFixed(1) + '%';
+            document.getElementById('leg-plate').innerText = (simState.dmgPlate*100).toFixed(1) + '%';
+        }
+
+        function showEOL() {
+            document.getElementById('eol-overlay').classList.add('active');
+            document.getElementById('eol-cycles').innerText = simState.cycles;
+            document.getElementById('eol-time').innerText = document.getElementById('sim-time').innerText;
+            let reason = "SEI (Químico)";
+            if(simState.dmgCrack > simState.dmgSEI) reason = "Cracking (Mecánico)";
+            if(simState.dmgPlate > simState.dmgSEI && simState.dmgPlate > simState.dmgCrack) reason = "Plating (Seguridad)";
+            document.getElementById('eol-reason').innerText = reason;
+        }
+
+        window.addEventListener('resize', () => { if(camera) { camera.aspect = window.innerWidth/window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight); }});
+    </script>
+</body>
+</html>
