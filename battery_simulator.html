@@ -1,0 +1,586 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simulador Batería Li-Ion v4.0 - Lab Mode</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Google Font -->
+    <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+    <style>
+        /* Clean Lab Aesthetic */
+        body { margin: 0; overflow: hidden; background-color: #f8fafc; color: #334155; font-family: 'Inter', sans-serif; }
+        #canvas-container { width: 100vw; height: 100vh; position: absolute; top: 0; left: 0; z-index: 1; }
+        #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 10; pointer-events: none; }
+        
+        /* Glassmorphism Panels (Light Mode) */
+        .panel {
+            background: rgba(255, 255, 255, 0.85);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.6);
+            padding: 20px;
+            border-radius: 16px;
+            pointer-events: auto;
+            box-shadow: 0 4px 20px rgba(148, 163, 184, 0.15);
+            transition: transform 0.2s ease;
+        }
+        .panel:hover { box-shadow: 0 8px 30px rgba(148, 163, 184, 0.25); }
+
+        /* Scrollbar */
+        .scrollable::-webkit-scrollbar { width: 6px; }
+        .scrollable::-webkit-scrollbar-track { background: rgba(0,0,0,0.05); }
+        .scrollable::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+        .scrollable::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+        /* Inputs */
+        input[type=range] { width: 100%; accent-color: #3b82f6; height: 6px; background: #e2e8f0; border-radius: 3px; }
+        input[type=number] { 
+            background: #f1f5f9; border: 1px solid #cbd5e1; color: #334155; 
+            padding: 4px 8px; border-radius: 6px; width: 70px; font-family: 'Share Tech Mono', monospace; 
+            font-weight: bold; text-align: right;
+        }
+        
+        .slider-container { margin-bottom: 14px; }
+        label { display: block; font-size: 0.75rem; color: #64748b; margin-bottom: 4px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; }
+        .value-tag { float: right; color: #3b82f6; font-weight: 800; font-size: 0.9rem; }
+
+        /* Displays */
+        .digital-display { font-family: 'Share Tech Mono', monospace; color: #0f172a; letter-spacing: -0.5px; }
+
+        /* Status Grid */
+        .status-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-top: 15px; }
+        .stat-box { 
+            background: #ffffff; padding: 12px; border-radius: 10px; text-align: center; 
+            border: 1px solid #e2e8f0; box-shadow: 0 2px 5px rgba(0,0,0,0.02);
+        }
+        .stat-value { font-size: 1.4rem; font-weight: 800; color: #1e293b; }
+        .stat-label { font-size: 0.65rem; color: #94a3b8; text-transform: uppercase; font-weight: 600; }
+
+        /* Warnings & Info */
+        .warning { color: #ef4444; font-size: 0.75rem; margin-top: 6px; display: none; animation: pulse 2s infinite; font-weight: bold; border-left: 3px solid #ef4444; padding-left: 8px; background: #fef2f2; padding: 4px 8px; border-radius: 4px; }
+        .info-box { background: #f8fafc; padding: 12px; border-radius: 8px; margin-top: 10px; font-size: 0.8rem; color: #475569; border: 1px solid #e2e8f0; }
+        .formula-box { background: #f1f5f9; padding: 8px; border-radius: 6px; margin-top: 5px; font-family: 'Courier New', monospace; font-size: 0.7rem; color: #64748b; border-left: 3px solid #8b5cf6; }
+
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.6; } }
+
+        /* Details/Summary */
+        details summary { cursor: pointer; user-select: none; list-style: none; display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 2px solid #f1f5f9; margin-bottom: 10px; font-size: 0.85rem; font-weight: 800; color: #6366f1; }
+        details summary:hover { color: #4f46e5; }
+        
+        /* EOL Overlay */
+        #eom-overlay {
+            background: rgba(255,255,255,0.95); backdrop-filter: blur(10px);
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 100;
+            display: flex; flex-direction: column; justify-content: center; align-items: center;
+            opacity: 0; pointer-events: none; transition: opacity 0.5s;
+        }
+        #eom-overlay.active { opacity: 1; pointer-events: auto; }
+        #eom-overlay h1 { font-size: 3.5rem; color: #ef4444; font-weight: 900; margin-bottom: 1rem; letter-spacing: -2px; }
+        #eom-overlay .stat-grid-eol div { background: #f1f5f9; border: 1px solid #cbd5e1; color: #1e293b; padding: 1.5rem; border-radius: 12px; text-align: center; }
+        #eom-overlay .stat-grid-eol .value { font-size: 2rem; font-weight: 800; color: #0f172a; font-family: 'Share Tech Mono'; }
+        
+        #fast-mode-indicator {
+            position: absolute; top: 20px; left: 50%; transform: translateX(-50%);
+            background: #ef4444; color: white; padding: 5px 15px; border-radius: 20px;
+            font-weight: bold; font-size: 0.8rem; box-shadow: 0 4px 15px rgba(239,68,68,0.4);
+            display: none; z-index: 5;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="canvas-container"></div>
+    <div id="fast-mode-indicator">⚡ MODO RÁPIDO: Visualización de Iones Desactivada</div>
+
+    <div id="ui-layer" class="flex justify-between p-6 items-start h-full">
+        
+        <!-- CONTROLS -->
+        <div class="panel w-80 scrollable max-h-full flex flex-col gap-4">
+            <h2 class="text-xl font-extrabold text-slate-800 border-b border-slate-200 pb-3 mb-1 flex justify-between items-center">
+                <span>LABORATORIO</span>
+                <span class="text-xs bg-slate-200 text-slate-600 px-2 py-1 rounded font-bold">v4.0</span>
+            </h2>
+            
+            <!-- Speed -->
+            <div class="slider-container">
+                <label>Factor de Aceleración <span id="val-speed" class="value-tag">1x</span></label>
+                <input type="range" id="inp-speed" min="1" max="5000" step="10" value="1">
+                <p class="text-xs text-slate-400 mt-1"> > 100x oculta iones para foco en degradación</p>
+            </div>
+
+            <!-- DOD -->
+            <div class="bg-slate-50 p-3 rounded-lg border border-slate-200">
+                <label class="text-indigo-500 mb-3">Rango de Ciclado (SOC)</label>
+                <div class="slider-container">
+                    <div class="flex justify-between text-xs mb-1 text-slate-500"><span>Min</span> <span id="val-min-soc">0%</span></div>
+                    <input type="range" id="inp-min-soc" min="0" max="45" step="5" value="0">
+                </div>
+                <div class="slider-container mb-0">
+                    <div class="flex justify-between text-xs mb-1 text-slate-500"><span>Max</span> <span id="val-max-soc">100%</span></div>
+                    <input type="range" id="inp-max-soc" min="55" max="100" step="5" value="100">
+                </div>
+            </div>
+
+            <!-- Physics -->
+            <div class="slider-container">
+                <label>C-Rate (Corriente) <span id="val-crate" class="value-tag">1.0 C</span></label>
+                <input type="range" id="inp-crate" min="0.1" max="5.0" step="0.1" value="1.0">
+            </div>
+            <div class="slider-container">
+                <label>Temperatura (°C) <span id="val-temp" class="value-tag">25°C</span></label>
+                <input type="range" id="inp-temp" min="-10" max="60" step="1" value="25">
+                <div id="warn-temp-high" class="warning">CALOR: Crecimiento SEI Exponencial</div>
+                <div id="warn-temp-low" class="warning">FRÍO: Riesgo Dendritas (Plating)</div>
+            </div>
+
+            <hr class="border-slate-200 my-2">
+
+            <!-- Parameters -->
+            <details>
+                <summary>🧪 Parámetros Modelo</summary>
+                <div class="space-y-3 bg-white p-3 rounded-lg border border-slate-200 shadow-inner">
+                    <div class="flex justify-between items-center">
+                        <label class="text-slate-600">k_SEI (Químico)</label>
+                        <input type="number" id="k-sei" value="1.0" step="0.1">
+                    </div>
+                    <div class="flex justify-between items-center">
+                        <label class="text-slate-600">k_Crack (Mecánico)</label>
+                        <input type="number" id="k-crack" value="1.0" step="0.1">
+                    </div>
+                    <div class="flex justify-between items-center">
+                        <label class="text-slate-600">k_Plate (Litio)</label>
+                        <input type="number" id="k-plate" value="1.0" step="0.1">
+                    </div>
+                </div>
+            </details>
+
+            <!-- Predictor -->
+            <details>
+                <summary>📊 Calculadora Vida Útil</summary>
+                <div class="p-4 bg-indigo-50 rounded-lg border border-indigo-100">
+                    <button id="btn-predict-life" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-2 rounded shadow font-bold transition text-sm">Estimar Duración</button>
+                    <div id="prediction-output" class="mt-3 text-center hidden">
+                        <p class="text-slate-500 text-xs font-bold uppercase">Estimación:</p>
+                        <p class="text-2xl font-bold text-indigo-700" id="pred-cycles">--</p>
+                        <p class="text-sm text-slate-600" id="pred-time">--</p>
+                        <p class="text-xs text-red-500 font-bold mt-1" id="pred-cause">--</p>
+                    </div>
+                </div>
+            </details>
+
+            <div class="flex gap-3 mt-2">
+                <button id="btn-pause" class="flex-1 bg-amber-500 hover:bg-amber-600 text-white py-3 rounded-lg font-bold shadow-sm transition">Pausar</button>
+                <button id="btn-reset" class="flex-1 bg-slate-700 hover:bg-slate-800 text-white py-3 rounded-lg font-bold shadow-sm transition">Reset</button>
+            </div>
+        </div>
+
+        <!-- MONITOR -->
+        <div class="panel w-72 flex flex-col gap-5">
+            <div>
+                <h2 class="text-xl font-extrabold text-slate-800 mb-1">MONITOR</h2>
+                <div class="text-xs font-bold text-slate-400 bg-slate-100 inline-block px-2 py-1 rounded">TIEMPO: <span id="disp-time-alive" class="text-slate-700 font-mono">0d 00h</span></div>
+            </div>
+            
+            <div class="status-grid">
+                <div class="stat-box border-b-4 border-green-500">
+                    <div class="stat-value" id="disp-soh">100%</div>
+                    <div class="stat-label">Salud (SOH)</div>
+                </div>
+                <div class="stat-box border-b-4 border-blue-500">
+                    <div class="stat-value text-blue-600" id="disp-soc">0%</div>
+                    <div class="stat-label">Carga (SOC)</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-value text-slate-700" id="disp-cycles">0</div>
+                    <div class="stat-label">Ciclos</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-value text-orange-500" id="disp-temp-int">25°C</div>
+                    <div class="stat-label">Temp. Int</div>
+                </div>
+            </div>
+
+            <div class="info-box border-l-4 border-red-400 bg-red-50">
+                <h3 class="text-xs font-bold text-red-500 mb-2 uppercase">Degradación Activa</h3>
+                <ul class="text-xs space-y-1 text-slate-600 font-mono" id="failure-list">
+                    <li>• Ninguna</li>
+                </ul>
+            </div>
+
+            <div class="bg-white p-3 rounded border border-slate-200 text-xs text-slate-500 shadow-sm">
+                <div class="font-bold mb-2 text-slate-800 uppercase">Leyenda</div>
+                <div class="grid grid-cols-2 gap-2">
+                    <div class="flex items-center"><div class="w-3 h-3 rounded-full bg-yellow-400 mr-2 border border-slate-300"></div> SEI</div>
+                    <div class="flex items-center"><div class="w-3 h-3 rounded-full bg-indigo-400 mr-2 border border-slate-300"></div> CEI</div>
+                    <div class="flex items-center"><div class="w-3 h-3 rounded-full bg-cyan-500 mr-2 border border-slate-300"></div> Li+</div>
+                    <div class="flex items-center"><div class="w-3 h-3 rounded-full bg-slate-400 mr-2 border border-slate-300"></div> Dendrita</div>
+                    <div class="flex items-center col-span-2"><div class="w-3 h-3 rounded-full bg-red-500 mr-2 border border-slate-300"></div> Material Muerto</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- EOL SCREEN -->
+    <div id="eom-overlay">
+        <h1>FIN DE VIDA ÚTIL</h1>
+        <p class="text-slate-500 text-xl font-light mb-8">La batería ha perdido el 30% de su capacidad.</p>
+        <div class="stat-grid-eol grid grid-cols-2 gap-6 mb-8">
+            <div>
+                <div class="text-xs text-slate-400 uppercase font-bold mb-1">Tiempo Total</div>
+                <div class="value" id="eol-time">--</div>
+            </div>
+            <div>
+                <div class="text-xs text-slate-400 uppercase font-bold mb-1">Ciclos</div>
+                <div class="value" id="eol-cycles">--</div>
+            </div>
+            <div class="col-span-2 border-red-200 bg-red-50">
+                <div class="text-xs text-red-400 uppercase font-bold mb-1">Causa del Fallo</div>
+                <div class="value text-red-500 text-xl" id="eol-cause">--</div>
+            </div>
+        </div>
+        <button id="btn-eom-reset" class="bg-slate-800 text-white px-8 py-3 rounded-full font-bold hover:bg-slate-900 transition shadow-lg">Nueva Simulación</button>
+    </div>
+
+    <script>
+        // --- CONFIG ---
+        const state = {
+            soc: 0, soh: 100, cycles: 0, totalTimeHours: 0, internalTemp: 25,
+            isCharging: true,
+            seiThickness: 0.001, cathodeDisorder: 0, dendriteGrowth: 0,
+            isPlaying: true, isDead: false
+        };
+
+        const params = {
+            speedMult: 1, cRate: 1.0, ambientTemp: 25,
+            minSoc: 0, maxSoc: 100,
+            k_sei: 1.0, k_crack: 1.0, k_plate: 1.0
+        };
+
+        // --- THREE.JS ---
+        const container = document.getElementById('canvas-container');
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0xf8fafc); // White/Slate-50
+        scene.fog = new THREE.FogExp2(0xf8fafc, 0.025);
+
+        const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 100);
+        camera.position.set(0, 2, 16);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(window.devicePixelRatio);
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        container.appendChild(renderer.domElement);
+
+        const controls = new THREE.OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.maxPolarAngle = Math.PI / 1.6;
+        controls.minDistance = 5;
+        controls.maxDistance = 30;
+
+        // --- LIGHTING ---
+        const hemiLight = new THREE.HemisphereLight(0xffffff, 0xffffff, 0.6);
+        scene.add(hemiLight);
+
+        const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        dirLight.position.set(5, 10, 7);
+        dirLight.castShadow = true;
+        dirLight.shadow.mapSize.width = 1024;
+        dirLight.shadow.mapSize.height = 1024;
+        scene.add(dirLight);
+
+        // --- MESHES ---
+        const cathodeGroup = new THREE.Group();
+        const anodeGroup = new THREE.Group();
+        scene.add(cathodeGroup);
+        scene.add(anodeGroup);
+
+        // Materials (Optimized for white BG)
+        const matCathode = new THREE.MeshStandardMaterial({ color: 0x7c3aed, roughness: 0.4, metalness: 0.1 }); // Violet
+        const matCathodeDead = new THREE.MeshStandardMaterial({ color: 0x94a3b8, roughness: 0.9 }); // Grey
+        const matAnode = new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.6 }); // Slate Dark
+        const matCollectorPos = new THREE.MeshStandardMaterial({ color: 0xc0c0c0, metalness: 0.8, roughness: 0.2 });
+        const matCollectorNeg = new THREE.MeshStandardMaterial({ color: 0xd97706, metalness: 0.8, roughness: 0.3 });
+        
+        // SEI (Yellow transparent)
+        const matSEI = new THREE.MeshBasicMaterial({ color: 0xfacc15, transparent: true, opacity: 0, side: THREE.FrontSide });
+        const seiBlock = new THREE.Mesh(new THREE.BoxGeometry(3.2, 7.2, 3.2), matSEI);
+        seiBlock.position.set(5, 0, 0);
+        scene.add(seiBlock);
+
+        // Separator
+        const sep = new THREE.Mesh(new THREE.BoxGeometry(0.1, 8, 8), new THREE.MeshBasicMaterial({ color: 0xe2e8f0, transparent: true, opacity: 0.3 }));
+        scene.add(sep);
+
+        // CATHODE PARTICLES
+        const cathodeParticles = [];
+        const ceiMat = new THREE.MeshBasicMaterial({ color: 0xa78bfa, transparent: true, opacity: 0 });
+        
+        for(let i=0; i<50; i++) {
+            const geo = new THREE.DodecahedronGeometry(0.4, 0);
+            const mesh = new THREE.Mesh(geo, matCathode.clone());
+            mesh.position.set(-5 + (Math.random()-0.5)*3, (Math.random()-0.5)*5, (Math.random()-0.5)*5);
+            mesh.rotation.set(Math.random()*3, Math.random()*3, 0);
+            mesh.castShadow = true;
+            mesh.receiveShadow = true;
+            
+            const shell = new THREE.Mesh(geo, ceiMat.clone());
+            shell.scale.set(1.1, 1.1, 1.1);
+            mesh.add(shell);
+
+            mesh.userData = { origPos: mesh.position.clone(), cei: shell, drift: new THREE.Vector3(Math.random()-0.5, Math.random()-0.5, Math.random()-0.5) };
+            cathodeParticles.push(mesh);
+            cathodeGroup.add(mesh);
+        }
+        // Collector
+        const colPos = new THREE.Mesh(new THREE.BoxGeometry(0.2, 7, 7), matCollectorPos);
+        colPos.position.x = -7; colPos.receiveShadow = true;
+        cathodeGroup.add(colPos);
+
+        // ANODE SHEETS
+        const anodeSheets = [];
+        for(let i=0; i<12; i++) {
+            const mesh = new THREE.Mesh(new THREE.BoxGeometry(2.5, 0.15, 2.5), matAnode.clone());
+            mesh.position.set(5, (i-6)*0.6, 0);
+            mesh.castShadow = true; mesh.receiveShadow = true;
+            mesh.userData = { origRot: mesh.rotation.clone() };
+            anodeSheets.push(mesh);
+            anodeGroup.add(mesh);
+        }
+        // Collector
+        const colNeg = new THREE.Mesh(new THREE.BoxGeometry(0.2, 7, 7), matCollectorNeg);
+        colNeg.position.x = 7; colNeg.receiveShadow = true;
+        anodeGroup.add(colNeg);
+
+        // IONS
+        const ionCount = 200;
+        const ionGeo = new THREE.SphereGeometry(0.1, 8, 8);
+        const ionMat = new THREE.MeshBasicMaterial({ color: 0x06b6d4 }); // Cyan-500
+        const ionsMesh = new THREE.InstancedMesh(ionGeo, ionMat, ionCount);
+        scene.add(ionsMesh);
+        const ionData = [];
+        for(let i=0; i<ionCount; i++) {
+            ionData.push({ x: (Math.random()-0.5)*10, y: (Math.random()-0.5)*6, z: (Math.random()-0.5)*4, state: 'active', color: new THREE.Color(0x06b6d4) });
+        }
+
+        // DENDRITES
+        const dendrites = [];
+        const matDendrite = new THREE.MeshStandardMaterial({ color: 0xcbd5e1, metalness: 0.8, roughness: 0.2 });
+        for(let i=0; i<30; i++) {
+            const m = new THREE.Mesh(new THREE.ConeGeometry(0.08, 1.5, 6), matDendrite);
+            m.position.set(3.5, (Math.random()-0.5)*6, (Math.random()-0.5)*3);
+            m.rotation.z = Math.PI/2;
+            m.rotation.x = (Math.random()-0.5);
+            m.scale.set(0,0,0);
+            scene.add(m);
+            dendrites.push(m);
+        }
+
+        const dummy = new THREE.Object3D();
+
+        // --- LOGIC ---
+
+        function updateUI() {
+            const h = Math.floor(state.totalTimeHours);
+            const d = Math.floor(h/24);
+            document.getElementById('disp-time-alive').innerText = `${d}d ${h%24}h`;
+            
+            document.getElementById('disp-soh').innerText = state.soh.toFixed(1) + '%';
+            document.getElementById('disp-soh').style.color = state.soh > 80 ? '#22c55e' : (state.soh > 70 ? '#eab308' : '#ef4444');
+            
+            document.getElementById('disp-soc').innerText = Math.round(state.soc) + '%';
+            document.getElementById('disp-cycles').innerText = Math.floor(state.cycles);
+            document.getElementById('disp-temp-int').innerText = state.internalTemp.toFixed(1) + '°C';
+
+            const list = [];
+            if(state.seiThickness > 0.2) list.push(`• SEI (Pérdida Li): -${(state.seiThickness*15).toFixed(1)}%`);
+            if(state.cathodeDisorder > 0.2) list.push(`• Grietas Cátodo: -${(state.cathodeDisorder*15).toFixed(1)}%`);
+            if(state.dendriteGrowth > 0.1) list.push(`• Riesgo Dendritas: ${(state.dendriteGrowth*100).toFixed(0)}%`);
+            if(list.length === 0) list.push("• Sin daños significativos");
+            document.getElementById('failure-list').innerHTML = list.map(l => `<li>${l}</li>`).join('');
+
+            // Fast Mode Indicator
+            const fastMode = params.speedMult > 100;
+            document.getElementById('fast-mode-indicator').style.display = fastMode ? 'block' : 'none';
+            ionsMesh.visible = !fastMode;
+        }
+
+        document.getElementById('btn-predict-life').addEventListener('click', () => {
+            // Improved simple formula
+            const stress = Math.pow(params.cRate, 1.6) * (1 + (params.ambientTemp > 30 ? (params.ambientTemp-30)*0.05 : 0));
+            const dod = (params.maxSoc - params.minSoc) / 100;
+            const degradationPerCycle = 0.025 * stress * dod * ((params.k_sei + params.k_crack)/2); 
+            
+            const cycles = Math.floor(30 / degradationPerCycle);
+            const years = (cycles * (1/params.cRate) * dod) / (24*365); // Approx time active
+
+            let cause = "Desgaste Químico (SEI)";
+            if(params.cRate > 2.5) cause = "Fractura Mecánica";
+            if(params.cRate > 1 && params.ambientTemp < 15) cause = "Cortocircuito (Dendritas)";
+
+            document.getElementById('pred-cycles').innerText = cycles > 10000 ? "> 10k" : cycles;
+            document.getElementById('pred-time').innerText = `~${years.toFixed(1)} Años (uso continuo)`;
+            document.getElementById('pred-cause').innerText = cause;
+            document.getElementById('prediction-output').classList.remove('hidden');
+        });
+
+        // Listeners
+        const ids = ['speed','crate','temp','min-soc','max-soc'];
+        ids.forEach(id => {
+            document.getElementById('inp-'+id).addEventListener('input', e => {
+                let val = parseFloat(e.target.value);
+                if(id === 'speed') {
+                    params.speedMult = parseInt(val); 
+                    document.getElementById('val-speed').innerText = val + 'x';
+                }
+                if(id === 'crate') { params.cRate = val; document.getElementById('val-crate').innerText = val.toFixed(1)+' C'; }
+                if(id === 'temp') { params.ambientTemp = parseInt(val); document.getElementById('val-temp').innerText = parseInt(val)+'°C'; }
+                if(id.includes('soc')) {
+                    params[id === 'min-soc' ? 'minSoc' : 'maxSoc'] = parseInt(val);
+                    document.getElementById('val-'+id).innerText = parseInt(val)+'%';
+                }
+            });
+        });
+
+        document.getElementById('k-sei').addEventListener('input', e => params.k_sei = parseFloat(e.target.value));
+        document.getElementById('k-crack').addEventListener('input', e => params.k_crack = parseFloat(e.target.value));
+        document.getElementById('k-plate').addEventListener('input', e => params.k_plate = parseFloat(e.target.value));
+
+        document.getElementById('btn-pause').addEventListener('click', () => { state.isPlaying = !state.isPlaying; document.getElementById('btn-pause').innerText = state.isPlaying ? "Pausar" : "Reanudar"; });
+        document.getElementById('btn-reset').addEventListener('click', reset);
+        document.getElementById('btn-eom-reset').addEventListener('click', reset);
+
+        function reset() {
+            state.soh = 100; state.soc = params.minSoc; state.cycles = 0; state.totalTimeHours = 0;
+            state.seiThickness = 0.001; state.cathodeDisorder = 0; state.dendriteGrowth = 0; state.isDead = false; state.isPlaying = true;
+            document.getElementById('eom-overlay').classList.remove('active');
+            // Visual Reset
+            cathodeParticles.forEach(p => { p.position.copy(p.userData.origPos); p.material.color.setHex(0x7c3aed); p.userData.cei.material.opacity = 0; });
+            dendrites.forEach(d => d.scale.set(0,0,0));
+            anodeSheets.forEach(s => s.rotation.copy(s.userData.origRot));
+            ionData.forEach(i => { i.state='active'; i.color.setHex(0x06b6d4); });
+        }
+
+        // --- LOOP ---
+        const clock = new THREE.Clock();
+        
+        function animate() {
+            requestAnimationFrame(animate);
+            const dtRaw = clock.getDelta();
+            controls.update();
+
+            if(!state.isPlaying || state.isDead) { renderer.render(scene, camera); return; }
+
+            const dt = dtRaw * params.speedMult; // Simulation seconds elapsed
+
+            // 1. PHYSICS TIME CALCULATION
+            // Definition: 1C current moves 100% capacity in 1 hour (3600 seconds).
+            // Rate of SOC change (% per sim-second) = (C-rate * 100) / 3600
+            const socRatePerSecond = (params.cRate * 100) / 3600;
+            const dSoc = socRatePerSecond * dt;
+
+            if(state.isCharging) {
+                state.soc += dSoc;
+                if(state.soc >= params.maxSoc) { state.soc = params.maxSoc; state.isCharging = false; }
+            } else {
+                state.soc -= dSoc;
+                if(state.soc <= params.minSoc) { state.soc = params.minSoc; state.isCharging = true; state.cycles++; }
+            }
+
+            // Accumulate Total Real Time (Hours) based on Physics
+            // Each simulation second represents 'dt' real seconds in this simplified model if 1x = realtime
+            // But usually simulations are faster. Here dt is scaled by speedMult.
+            // Since we moved dSOC based on C-rate and dt, the time passed is exactly dt seconds *converted to hours*
+            state.totalTimeHours += dt / 3600; 
+
+            // Temp
+            const heat = Math.pow(params.cRate, 2) * 0.05 * (1+(100-state.soh)/50);
+            state.internalTemp += (heat - (state.internalTemp - params.ambientTemp)*0.1) * dt * 0.01;
+
+            // 2. DEGRADATION (Tuned for visibility)
+            // SEI: Time^0.5 dependence
+            const seiRate = params.k_sei * 1e-6 * Math.exp(0.05*(state.internalTemp-25)) * dt;
+            state.seiThickness += seiRate;
+
+            // Cracks: Stress based
+            const stress = Math.pow(params.cRate, 1.8) * ((params.maxSoc-params.minSoc)/100);
+            state.cathodeDisorder += params.k_crack * 2e-6 * stress * dt;
+
+            // Plating
+            if(state.isCharging && state.soc > 85 && state.internalTemp < 15) {
+                state.dendriteGrowth += params.k_plate * 5e-6 * params.cRate * (15-state.internalTemp) * dt;
+            }
+            
+            state.soh = Math.max(0, 100 - (state.seiThickness*15 + state.cathodeDisorder*20 + state.dendriteGrowth*25) * 100); // Scaling factor for visibility
+
+            // 3. VISUALS
+            seiBlock.material.opacity = state.seiThickness * 3;
+
+            if(state.cathodeDisorder > 0.01) {
+                cathodeParticles.forEach(p => {
+                    const d = state.cathodeDisorder;
+                    p.position.addScaledVector(p.userData.drift, 0.001 * d * params.speedMult/10); // Move slowly
+                    p.material.color.setHSL(0.73, 0.8, 0.5 * (1-d*2));
+                    p.userData.cei.material.opacity = d * 3;
+                });
+            }
+
+            if(state.dendriteGrowth > 0.01) {
+                dendrites.forEach((d,i) => {
+                    const s = Math.min(2, state.dendriteGrowth * 5);
+                    if(i < state.dendriteGrowth * 100) d.scale.set(s,s,s);
+                });
+            }
+
+            // IONS (Only if visible)
+            if(ionsMesh.visible) {
+                const txBase = state.isCharging ? 5 : -5;
+                const speed = params.cRate * dt * 0.5; 
+                const limitSEI = Math.floor(state.seiThickness * 500);
+                
+                for(let i=0; i<ionCount; i++) {
+                    const d = ionData[i];
+                    if(d.state === 'active') {
+                        if(i < limitSEI) { d.state = 'trapped'; d.color.setHex(0xfacc15); }
+                        else {
+                            let tx = txBase + (Math.random()-0.5)*2;
+                            d.x += (tx - d.x) * 0.05 * params.cRate; // Smooth lerp
+                        }
+                    }
+                    dummy.position.set(d.x, d.y, d.z);
+                    dummy.updateMatrix();
+                    ionsMesh.setMatrixAt(i, dummy.matrix);
+                    ionsMesh.setColorAt(i, d.color);
+                }
+                ionsMesh.instanceMatrix.needsUpdate = true;
+                ionsMesh.instanceColor.needsUpdate = true;
+            }
+
+            updateUI();
+
+            if(state.soh < 70) {
+                state.isDead = true;
+                document.getElementById('eom-overlay').classList.add('active');
+                document.getElementById('eol-time').innerText = document.getElementById('disp-time-alive').innerText;
+                document.getElementById('eol-cycles').innerText = Math.floor(state.cycles);
+                let c = "Química (SEI)";
+                if(state.dendriteGrowth > 0.5) c = "Cortocircuito";
+                else if(state.cathodeDisorder > 0.3) c = "Mecánica (Grietas)";
+                document.getElementById('eol-cause').innerText = c;
+            }
+
+            renderer.render(scene, camera);
+        }
+        animate();
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+    </script>
+</body>
+</html>
